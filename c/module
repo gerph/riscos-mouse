@@ -1,16 +1,25 @@
 /*******************************************************************
  * File:        module
  * Purpose:     Mouse2 module interface
- * Author:      YOUR NAME
+ * Author:      Gerph
  ******************************************************************/
 
 #include <stdlib.h>
 #include <stdio.h>
 
 #include "kernel.h"
-#include "modhead.h"
+#include "swis.h"
 
-#define DEBUG
+#include "riscos/NewErrors.h"
+#include "riscos/Pointer.h"
+#include "riscos/Services.h"
+#include "riscos/Vectors.h"
+
+#include "modhead.h"
+#include "hw.h"
+#include "mouse.h"
+
+/* #define DEBUG */
 
 #ifdef DEBUG
 #define dprintf if (1) printf
@@ -33,6 +42,35 @@
  **************************************************************************/
 _kernel_oserror *Mod_Init(const char *tail, int podule_base, void *pw)
 {
+    _kernel_oserror *err;
+    int mouse_type;
+
+    (void) tail;
+    (void) podule_base;
+    if (!mouse_hardware_supported()) {
+        static _kernel_oserror error_bad_hardware = {
+            ErrorNumber_BadHard, "Unsupported hardware configuration"
+        };
+        return &error_bad_hardware;
+    }
+
+    mouse_initialise();
+    err = _swix(OS_Claim, _INR(0,2), PointerV, PointerV_Entry, pw);
+    if (err != NULL) {
+        mouse_finalise();
+        return err;
+    }
+
+    err = _swix(OS_Pointer, _IN(0) | _OUT(0),
+                OSPointer_ReadMouseType, &mouse_type);
+    if (err != NULL) {
+        _swix(OS_Release, _INR(0,2), PointerV, PointerV_Entry, pw);
+        mouse_finalise();
+        return err;
+    }
+
+    if (mouse_type == PointerDevice_QuadMouse)
+        mouse_initialise();
     dprintf("Module Mouse2 initialised\n");
     return NULL;
 }
@@ -52,6 +90,28 @@ _kernel_oserror *Mod_Init(const char *tail, int podule_base, void *pw)
  **************************************************************************/
 _kernel_oserror *Mod_Final(int fatal, int podule_base, void *pw)
 {
+    _kernel_oserror *err;
+
+    (void) fatal;
+    (void) podule_base;
+    err = _swix(OS_Release, _INR(0,2), PointerV, PointerV_Entry, pw);
+    mouse_finalise();
     dprintf("Module Mouse2 dying\n");
-    return NULL;
+    return err;
+}
+
+/*******************************************************************
+ Function:      Mod_Service
+ Description:   Reinitialise the hardware after a system reset.
+ Parameters:    service = service number
+                r = service register block
+                pw = module private word
+ Returns:       none
+ ******************************************************************/
+void Mod_Service(int service, _kernel_swi_regs *r, void *pw)
+{
+    (void) r;
+    (void) pw;
+    if (service == Service_Reset)
+        mouse_initialise();
 }

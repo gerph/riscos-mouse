@@ -1,0 +1,207 @@
+/*******************************************************************
+ * File:        mouse
+ * Purpose:     PointerV implementation for quadrature and STD mice
+ * Author:      Gerph
+ ******************************************************************/
+
+#include <stdint.h>
+#include <string.h>
+
+#include "kernel.h"
+#include "swis.h"
+
+#include "riscos/ModHand.h"
+#include "riscos/Pointer.h"
+#include "riscos/Vectors.h"
+
+#include "hw.h"
+#include "mouse.h"
+
+#define POINTER_RECORD_HEADER_SIZE  9u
+#define POINTER_RECORD_NAME_OFFSET  9u
+#define BUTTON_SELECT               0x04u
+#define BUTTON_MENU                 0x02u
+#define BUTTON_ADJUST               0x01u
+#define KEY_SELECT                  0x70u
+#define KEY_MENU                    0x71u
+#define KEY_ADJUST                  0x72u
+#define KEY_DOWN                    1u
+#define KEY_UP                      2u
+#define STD_WHEEL_DELAY             3u
+#define STD_WHEEL_LIMIT             7
+#define MOUSE_BUTTONS_NONE          0x07u
+
+enum pointer_vector_result {
+    pointer_vector_claim = 0,
+    pointer_vector_passon = 1
+};
+
+static uint32_t last_buttons;
+static uint32_t std_delay;
+
+/*******************************************************************
+ Function:      mouse_add_pointer_record
+ Description:   Add one mouse device record to a PointerV identify list.
+ Parameters:    list = existing list
+                type = pointer device type
+                name = displayed device name
+ Returns:       updated list, or the input list if allocation fails
+ ******************************************************************/
+static void *mouse_add_pointer_record(void *list, uint8_t type, const char *name)
+{
+    _kernel_oserror *err;
+    uint8_t *record;
+    uint32_t size;
+
+    size = POINTER_RECORD_HEADER_SIZE + (uint32_t) strlen(name) + 1u;
+    record = NULL;
+    err = _swix(OS_Module, _INR(0,1) | _OUT(2),
+                ModHandReason_Claim, size, &record);
+    if (err != NULL)
+        return list;
+
+    *(uint32_t *) (record + PointerNext) = (uint32_t) (uintptr_t) list;
+    *(uint32_t *) (record + PointerFlags) = 0;
+    *(uint8_t *) (record + PointerType) = type;
+    strcpy((char *) (record + POINTER_RECORD_NAME_OFFSET), name);
+    return record;
+}
+
+/*******************************************************************
+ Function:      mouse_send_button
+ Description:   Send a mouse button transition through KeyV.
+ Parameters:    changed = changed button mask
+                buttons = new button state
+                mask = button to report
+                key = RISC OS mouse key code
+ Returns:       none
+ ******************************************************************/
+static void mouse_send_button(uint32_t changed, uint32_t buttons,
+                              uint32_t mask, uint32_t key)
+{
+    if ((changed & mask) != 0) {
+        _swix(OS_CallAVector, _INR(0,1) | _IN(9),
+              (buttons & mask) == 0 ? KEY_DOWN : KEY_UP, key, KEYV);
+    }
+}
+
+/*******************************************************************
+ Function:      mouse_handle_request
+ Description:   Return movement, wheel movement and button transitions.
+ Parameters:    r = PointerV register block
+                device_type = selected pointer device type
+ Returns:       pointer_vector_claim to claim PointerV
+ ******************************************************************/
+static int mouse_handle_request(_kernel_swi_regs *r, uint32_t device_type)
+{
+    mouse_hardware_sample sample;
+    uint32_t changed;
+
+    mouse_hardware_read(&sample);
+    if (device_type == PointerDevice_QuadMouseSTD &&
+        (std_delay != 0 || sample.buttons == MOUSE_BUTTONS_NONE)) {
+        if (std_delay != 0)
+            --std_delay;
+        else
+            std_delay = STD_WHEEL_DELAY;
+
+        sample.x = 0;
+        sample.y = -sample.y;
+        if (sample.y > STD_WHEEL_LIMIT)
+            sample.y = STD_WHEEL_LIMIT;
+        if (sample.y < -STD_WHEEL_LIMIT)
+            sample.y = -STD_WHEEL_LIMIT;
+        r->r[2] = 0;
+        r->r[3] = 0;
+        r->r[4] = sample.x;
+        r->r[5] = sample.y;
+        r->r[6] = 0;
+        if ((uint32_t) r->r[0] == PointerReason_ExtRequest)
+            r->r[0] = -1;
+        return pointer_vector_claim;
+    }
+
+    r->r[2] = sample.x;
+    r->r[3] = sample.y;
+    if ((uint32_t) r->r[0] == PointerReason_ExtRequest) {
+        r->r[0] = -1;
+        r->r[4] = 0;
+        r->r[5] = 0;
+        r->r[6] = sample.buttons;
+        return pointer_vector_claim;
+    }
+
+    changed = last_buttons ^ sample.buttons;
+    last_buttons = sample.buttons;
+    mouse_send_button(changed, sample.buttons, BUTTON_SELECT, KEY_SELECT);
+    mouse_send_button(changed, sample.buttons, BUTTON_MENU, KEY_MENU);
+    mouse_send_button(changed, sample.buttons, BUTTON_ADJUST, KEY_ADJUST);
+    return pointer_vector_claim;
+}
+
+/*******************************************************************
+ Function:      mouse_initialise
+ Description:   Initialise state used by the PointerV driver.
+ Parameters:    none
+ Returns:       none
+ ******************************************************************/
+void mouse_initialise(void)
+{
+    last_buttons = 0;
+    std_delay = 0;
+    mouse_hardware_reset();
+}
+
+/*******************************************************************
+ Function:      mouse_finalise
+ Description:   Leave the driver in an inert state.
+ Parameters:    none
+ Returns:       none
+ ******************************************************************/
+void mouse_finalise(void)
+{
+    last_buttons = 0;
+    std_delay = 0;
+}
+
+/*******************************************************************
+ Function:      PointerV_Handler
+ Description:   Dispatch PointerV calls for quadrature mouse devices.
+ Parameters:    r = PointerV register block
+                pw = module private word (unused)
+ Returns:       pointer_vector_claim when the call was claimed
+ ******************************************************************/
+int PointerV_Handler(_kernel_swi_regs *r, void *pw)
+{
+    uint32_t reason;
+    uint32_t device_type;
+
+    (void) pw;
+    reason = (uint32_t) r->r[0];
+    device_type = (uint32_t) r->r[1];
+    if (reason == PointerReason_Request || reason == PointerReason_ExtRequest) {
+        if (device_type != PointerDevice_QuadMouse &&
+            device_type != PointerDevice_QuadMouseSTD)
+            return pointer_vector_passon;
+        return mouse_handle_request(r, device_type);
+    }
+
+    if (reason == PointerReason_Identify) {
+        r->r[1] = (int) (uintptr_t) mouse_add_pointer_record(
+                      (void *) (uintptr_t) r->r[1],
+                      PointerDevice_QuadMouse, "Standard mouse");
+        r->r[1] = (int) (uintptr_t) mouse_add_pointer_record(
+                      (void *) (uintptr_t) r->r[1],
+                      PointerDevice_QuadMouseSTD,
+                      "PS2 mouse (STD interface)");
+        return pointer_vector_claim;
+    }
+
+    if (reason == PointerReason_Selected &&
+        device_type == PointerDevice_QuadMouse) {
+        mouse_initialise();
+        return pointer_vector_claim;
+    }
+
+    return pointer_vector_passon;
+}

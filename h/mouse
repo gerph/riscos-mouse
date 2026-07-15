@@ -1,0 +1,37 @@
+/*******************************************************************
+ * File:        mouse
+ * Purpose:     PointerV implementation for quadrature and STD mice
+ * Author:      Gerph
+ ******************************************************************/
+
+#ifndef MOUSE2_MOUSE_H
+#define MOUSE2_MOUSE_H
+
+#include "kernel.h"
+
+/*******************************************************************
+ Function:      mouse_initialise
+ Description:   Initialise the mouse driver's state.
+ Parameters:    none
+ Returns:       none
+ ******************************************************************/
+void mouse_initialise(void);
+
+/*******************************************************************
+ Function:      mouse_finalise
+ Description:   Clear state held by the mouse driver.
+ Parameters:    none
+ Returns:       none
+ ******************************************************************/
+void mouse_finalise(void);
+
+/*******************************************************************
+ Function:      PointerV_Handler
+ Description:   Handle PointerV calls for supported mouse devices.
+ Parameters:    r = PointerV register block
+                pw = module private word
+ Returns:       vector claim or pass-on result
+ ******************************************************************/
+int PointerV_Handler(_kernel_swi_regs *r, void *pw);
+
+#endif

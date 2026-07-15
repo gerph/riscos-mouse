@@ -1,0 +1,42 @@
+/*******************************************************************
+ * File:        hw
+ * Purpose:     IOMD quadrature mouse hardware interface
+ * Author:      Gerph
+ ******************************************************************/
+
+#ifndef MOUSE2_HW_H
+#define MOUSE2_HW_H
+
+#include <stdint.h>
+
+typedef struct mouse_hardware_sample_s {
+    int32_t x;
+    int32_t y;
+    uint32_t buttons;
+} mouse_hardware_sample;
+
+/*******************************************************************
+ Function:      mouse_hardware_supported
+ Description:   Test whether IOMD quadrature mouse hardware is present.
+ Parameters:    none
+ Returns:       non-zero when the hardware is supported
+ ******************************************************************/
+int mouse_hardware_supported(void);
+
+/*******************************************************************
+ Function:      mouse_hardware_reset
+ Description:   Reset quadrature counters and their saved values.
+ Parameters:    none
+ Returns:       none
+ ******************************************************************/
+void mouse_hardware_reset(void);
+
+/*******************************************************************
+ Function:      mouse_hardware_read
+ Description:   Read movement and button state from IOMD.
+ Parameters:    sample = destination for the hardware sample
+ Returns:       none
+ ******************************************************************/
+void mouse_hardware_read(mouse_hardware_sample *sample);
+
+#endif

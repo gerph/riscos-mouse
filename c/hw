@@ -1,0 +1,101 @@
+/*******************************************************************
+ * File:        hw
+ * Purpose:     IOMD quadrature mouse hardware interface
+ * Author:      Gerph
+ ******************************************************************/
+
+#include <stdint.h>
+#include <stdlib.h>
+
+#include "kernel.h"
+#include "swis.h"
+
+#include "riscos/OSReadSysInfo.h"
+
+#include "hw.h"
+
+#define IOMD_BASE                 0x03200000u
+#define IOMD_MOUSE_X_OFFSET       0x0a0u
+#define IOMD_MOUSE_Y_OFFSET       0x0a4u
+#define IOMD_BUTTONS_ADDRESS      0x03310000u
+#define IOMD_BUTTONS_INVERT       0x70u
+#define IOMD_BUTTONS_SHIFT        4u
+#define IOMD_BUTTONS_MASK         0x07u
+#define MOUSE_COUNTER_MASK         0xffffu
+
+static uint32_t last_x;
+static uint32_t last_y;
+
+/*******************************************************************
+ Function:      mouse_hardware_supported
+ Description:   Check that the machine has an IOMD with quadrature
+                mouse counters.
+ Parameters:    none
+ Returns:       non-zero when the hardware is supported
+ ******************************************************************/
+int mouse_hardware_supported(void)
+{
+    _kernel_oserror *err;
+    int32_t chips;
+    int32_t iomd_type;
+
+    err = _swix(OS_ReadSysInfo, _IN(0) | _OUT(0) | _OUT(2),
+                ReadSysInfoReason_ChipsAndUniqueID, &chips, &iomd_type);
+    if (err != NULL)
+        return 0;
+
+    return (((uint32_t) chips >> ReadSysInfoReason_ChipsAndUniqueID_IOShift) &
+            ReadSysInfoReason_ChipsAndUniqueID_IOMask) ==
+                ReadSysInfoReason_ChipsAndUniqueID_IO_IOMD &&
+           (((uint32_t) iomd_type >> ReadSysInfoReason_ChipsAndUniqueID_IOMDTypeShift) &
+            ReadSysInfoReason_ChipsAndUniqueID_IOMDTypeMask) ==
+                ReadSysInfoReason_ChipsAndUniqueID_IOMDType_IOMD;
+}
+
+/*******************************************************************
+ Function:      mouse_hardware_reset
+ Description:   Clear IOMD mouse counters and their software history.
+ Parameters:    none
+ Returns:       none
+ ******************************************************************/
+void mouse_hardware_reset(void)
+{
+    volatile uint32_t *x_counter;
+    volatile uint32_t *y_counter;
+
+    x_counter = (volatile uint32_t *) (IOMD_BASE + IOMD_MOUSE_X_OFFSET);
+    y_counter = (volatile uint32_t *) (IOMD_BASE + IOMD_MOUSE_Y_OFFSET);
+    *x_counter = 0;
+    *y_counter = 0;
+    last_x = 0;
+    last_y = 0;
+}
+
+/*******************************************************************
+ Function:      mouse_hardware_read
+ Description:   Read quadrature counters and the three mouse buttons.
+ Parameters:    sample = destination for movement and button state
+ Returns:       none
+ ******************************************************************/
+void mouse_hardware_read(mouse_hardware_sample *sample)
+{
+    volatile uint32_t *x_counter;
+    volatile uint32_t *y_counter;
+    volatile uint32_t *button_register;
+    uint32_t current_x;
+    uint32_t current_y;
+    uint32_t buttons;
+
+    x_counter = (volatile uint32_t *) (IOMD_BASE + IOMD_MOUSE_X_OFFSET);
+    y_counter = (volatile uint32_t *) (IOMD_BASE + IOMD_MOUSE_Y_OFFSET);
+    button_register = (volatile uint32_t *) IOMD_BUTTONS_ADDRESS;
+    current_x = *x_counter;
+    current_y = *y_counter;
+    buttons = (*button_register ^ IOMD_BUTTONS_INVERT) >> IOMD_BUTTONS_SHIFT;
+
+    sample->x = (int32_t) (int16_t) ((current_x - last_x) & MOUSE_COUNTER_MASK);
+    sample->y = (int32_t) (int16_t) ((current_y - last_y) & MOUSE_COUNTER_MASK);
+    sample->buttons = buttons & IOMD_BUTTONS_MASK;
+    last_x = current_x;
+    last_y = current_y;
+}

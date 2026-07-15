@@ -3,6 +3,7 @@
 ; Customise this to fit the module you are writing
 
 #include "VersionNum"
+#include "riscos/Services.h"
 
 ; If you declare module-is-runnable the module will be entered at the main()
 ; function in user mode (ie like a normal C program).
@@ -134,6 +135,7 @@ finalisation-code: Mod_Final
 ;   error-capable: Veneer is capable of claiming the vector and returning an
 ;                  error
 ;vector-handlers: Vector_Entry/Vector_Handler
+vector-handlers: PointerV_Entry/PointerV_Handler
 
 ; VectorTrap veneers are used to provide a simple C environment for SVC and
 ; IRQ modes. You should register the Entry routine as the external interface
@@ -210,5 +212,4 @@ finalisation-code: Mod_Final
 ; The module service entry will be called to process services. You are
 ; strongly recommended to include the numbers of the services you wish to
 ; handle.
-;service-call-handler: Mod_Service 1 2 3 4 5 6
-
+service-call-handler: Mod_Service Service_Reset
